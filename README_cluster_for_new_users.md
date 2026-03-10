@@ -4,15 +4,36 @@ This guide explains how to set up the environment and run the breathwork transcr
 
 ## 1. Get the code on the cluster
 
-In a terminal on the cluster:
+The pipeline can use **Speaker Diarization** (who spoke when). For that, the `whisper-diarization` repo must sit **next to** `breathwork-transcription` in the same parent directory. Clone both like this:
 
 ```bash
 cd /gs/home/<your-username>
+
+# Clone both repos as siblings (required for diarization)
 git clone https://github.com/Namsjain01/breathwork-transcription.git
+git clone https://github.com/MahmoudAshraf97/whisper-diarization.git
+
 cd breathwork-transcription
 ```
 
-*Note: Replace `<your-username>` with your actual cluster username.*
+Resulting layout:
+
+```
+/gs/home/<your-username>/
+├── breathwork-transcription/   ← run the pipeline from here
+└── whisper-diarization/        ← used automatically when diarization is enabled
+```
+
+**Optional:** After cloning only `breathwork-transcription`, you can run the setup script to add the sibling repo:
+
+```bash
+cd /gs/home/<your-username>
+bash breathwork-transcription/scripts/setup_repos.sh .
+```
+
+**Without diarization:** If you only clone `breathwork-transcription`, the pipeline still runs; use `--no-diarization` to skip speaker labels. To use diarization later, clone `whisper-diarization` into the same parent directory, or set `DIARIZATION_REPO_PATH` in `pipeline/config.py` to the path of the whisper-diarization folder.
+
+*Replace `<your-username>` with your actual cluster username.*
 
 ## 2. Create your conda environment (CPU only, safe everywhere)
 
@@ -115,3 +136,19 @@ python pipeline/run_pipeline.py --input "input_file_path"
 ```
 
 Here `torch.cuda.is_available()` is `False`, so the same code runs on CPU.
+
+---
+
+## 5. Speaker Diarization (optional)
+
+If you cloned both repos as siblings (Section 1), speaker diarization is enabled by default. To disable it for a run:
+
+```bash
+python pipeline/run_pipeline.py --input "input_file_path" --no-diarization
+```
+
+If `whisper-diarization` is in a different location, set in `pipeline/config.py`:
+
+```python
+DIARIZATION_REPO_PATH = "/absolute/path/to/whisper-diarization"
+```

@@ -1,0 +1,68 @@
+---
+description: Projekt-Kontext und Regeln für breathwork-transcription + whisper-diarization
+alwaysApply: true
+---
+
+# Projekt-Kontext für AI Agent
+
+## Überblick
+Dieses Projekt erweitert eine bestehende Transkriptions-Pipeline
+(breathwork-transcription) um Speaker Diarization (whisper-diarization).
+Beide Projekte sind als Multi-Root Workspace geöffnet.
+
+**Lies zuerst diese Dokumente in dieser Reihenfolge:**
+1. `doc/projekt_analyse_und_planung.md`      → Hauptprojekt vollständig analysiert
+2. `doc/diarization_projekt_analyse.md`      → Diarization-Projekt vollständig analysiert
+3. `doc/implementierungsplan.md`             → Schritt-für-Schritt Implementierungsplan
+
+---
+
+## Wichtigste Regeln (nicht verhandelbar)
+
+- **Alle bestehenden Features bleiben erhalten** – nichts entfernen, nur erweitern
+- **Engine:** `faster-whisper` (ersetzt `openai-whisper`)
+- **Sprache:** English (`en`)
+- **word_timestamps=True** ist Pflicht (für Diarization)
+- **100% lokal** – kein Internet zur Laufzeit, kein HuggingFace Token
+- **Rückwärtskompatibel** – Diarization ist optional (`ENABLE_DIARIZATION` in config.py)
+
+---
+
+## Projektstruktur
+
+### Hauptprojekt (breathwork-transcription)
+```
+pipeline/
+├── config.py            → Zentrale Konfiguration (hier Änderungen beginnen)
+├── run_pipeline.py      → Orchestrierung (Schritt 3b einfügen)
+├── transcribe.py        → Umschreiben auf faster-whisper
+├── diarize.py           → NEU erstellen
+├── merge_outputs.py     → Erweitern um Speaker-Labels
+├── preprocess_audio.py  → NICHT anfassen
+└── utils.py             → NICHT anfassen
+```
+
+### Diarization-Projekt (whisper-diarization)
+```
+diarize.py              → Logik-Referenz (nicht direkt importieren!)
+helpers.py              → Hilfsfunktionen (übernehmen)
+diarization/
+└── msdd/
+    ├── msdd.py         → MSDDDiarizer Klasse (als Referenz nutzen)
+    └── diar_infer_telephonic.yaml → NeMo Konfiguration
+```
+
+---
+
+## Implementierungs-Reihenfolge
+
+Arbeite die Phasen **strikt in dieser Reihenfolge** ab:
+
+1. `requirements.txt` aktualisieren
+2. `config.py` erweitern
+3. `transcribe.py` auf faster-whisper umschreiben
+4. `pipeline/diarize.py` neu erstellen (als Klasse, nicht als Script)
+5. `merge_outputs.py` erweitern (rückwärtskompatibel, default=None)
+6. `run_pipeline.py` erweitern (Schritt 3b einfügen)
+
+**Nach jeder Phase testen, bevor die nächste beginnt.**

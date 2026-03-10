@@ -1,0 +1,15 @@
+{
+  "folders": [
+    {
+      "name": "breathwork-transcription (Hauptprojekt)",
+      "path": "."
+    },
+    {
+      "name": "whisper-diarization (Diarization)",
+      "path": "../whisper-diarization"
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "~/miniconda3/envs/breathwork-py310/bin/python"
+  }
+}

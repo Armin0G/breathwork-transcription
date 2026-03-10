@@ -95,6 +95,19 @@ python3 pipeline/run_pipeline.py --input /path/to/your/recordings
 # Output will be in: /path/to/your/recordings/transcripts/
 ```
 
+**Speaker Diarization (optional):** To get speaker labels (`[SPEAKER_00]:`, `[SPEAKER_01]:`, …), clone `whisper-diarization` as a **sibling** of this repo, then install and run as usual:
+
+```bash
+cd /path/to/parent/dir
+git clone https://github.com/Namsjain01/breathwork-transcription.git
+git clone https://github.com/MahmoudAshraf97/whisper-diarization.git
+cd breathwork-transcription
+pip install -r requirements.txt
+python3 pipeline/run_pipeline.py --input /path/to/your/recordings
+```
+
+Without the sibling repo, run with `--no-diarization` for transcription only. See [Cluster setup](README_cluster_for_new_users.md) for cluster-specific steps.
+
 ---
 
 ## Installation

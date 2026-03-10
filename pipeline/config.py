@@ -35,7 +35,7 @@ OUTPUT_DIR_NAME = "transcripts"
 #   small.en  = 244M params, 466 MB  - Fast, good accuracy (RECOMMENDED)
 #   medium.en = 769M params, 1.5 GB  - Slower, better accuracy
 #   large-v3  = 1.5B params, 2.9 GB  - Slowest, best accuracy
-WHISPER_MODEL = "small.en"
+WHISPER_MODEL = "large-v3"
 
 # Language (force English transcription)
 LANGUAGE = "en"
@@ -48,6 +48,14 @@ TASK = "transcribe"
 
 # Verbose output from Whisper
 VERBOSE = False
+
+# Batch size for faster-whisper batched inference
+# Reduce this value if you encounter out-of-memory errors.
+# Set to 0 to disable batching.
+WHISPER_BATCH_SIZE = 8
+
+# Suppress numeral tokens during transcription (used by diarization alignment flow)
+SUPPRESS_NUMERALS = False
 
 # ============================================================================
 # QUALITY DETECTION SETTINGS
@@ -180,10 +188,34 @@ PIPELINE_VERSION = "1.1.0"
 # Processing description
 PROCESSING_DESCRIPTION = """
 Audio files were preprocessed using FFmpeg (loudness normalization,
-conversion to 16kHz mono 16-bit PCM) and transcribed using OpenAI
-Whisper small.en model (244M parameters) with temperature 0.0 for
+conversion to 16kHz mono 16-bit PCM) and transcribed using faster-whisper
+large-v3 with language='en' and temperature 0.0 for
 reproducibility. All processing performed locally with no cloud services.
 """
+
+# ============================================================================
+# DIARIZATION SETTINGS
+# ============================================================================
+
+# Optional speaker diarization feature toggle
+ENABLE_DIARIZATION = True
+
+# Optional Demucs vocal isolation before diarization
+# For speech-only interviews this is usually not needed.
+ENABLE_STEMMING = False
+
+# Upper bound for automatic speaker estimation
+MAX_SPEAKERS = 4
+
+# Speaker label format used in output files
+SPEAKER_LABEL_FORMAT = "SPEAKER_{:02d}"
+
+# Path to whisper-diarization repository (required when ENABLE_DIARIZATION is True).
+# None = expect whisper-diarization as sibling of this repo:
+#   <parent_dir>/breathwork-transcription/
+#   <parent_dir>/whisper-diarization/
+# Set to a Path or string to use a custom location (e.g. on cluster).
+DIARIZATION_REPO_PATH = None
 
 # ============================================================================
 # VALIDATION
@@ -223,4 +255,6 @@ if __name__ == "__main__":
     print(f"  Sample rate: {TARGET_SAMPLE_RATE} Hz")
     print(f"  Channels: {TARGET_CHANNELS} (mono)")
     print(f"  Bit depth: {TARGET_BIT_DEPTH}-bit")
+    diar_path = DIARIZATION_REPO_PATH if DIARIZATION_REPO_PATH is not None else (BASE_DIR.parent / "whisper-diarization")
+    print(f"  Diarization repo (when enabled): {diar_path}")
     print(f"\nNote: Input/output directories are now specified via --input argument")

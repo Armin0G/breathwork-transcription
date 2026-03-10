@@ -7,7 +7,7 @@ final output files (TXT and JSON formats).
 
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Optional
 import math
 
 import config
@@ -73,10 +73,45 @@ def add_quality_flags(quality_analysis: Dict) -> Dict:
     return quality_analysis
 
 
+def format_diarization_as_text(diarization_result: List[Dict]) -> str:
+    """Format diarization segments as readable speaker-attributed text."""
+    if not diarization_result:
+        return ""
+
+    lines: List[str] = []
+    previous_speaker = None
+
+    for segment in diarization_result:
+        speaker = segment.get("speaker", "UNKNOWN")
+        text = segment.get("text", "").strip()
+        if not text:
+            continue
+
+        if speaker != previous_speaker:
+            if lines:
+                lines.append("")
+            lines.append(f"[{speaker}]: {text}")
+        else:
+            lines[-1] += f" {text}"
+
+        previous_speaker = speaker
+
+    return "\n".join(lines)
+
+
+def get_diarization_for_file(diarization_results: Optional[Dict[str, List[Dict]]],
+                             filename_stem: str) -> List[Dict]:
+    """Return diarization segments for a file stem or an empty list."""
+    if not diarization_results:
+        return []
+    return diarization_results.get(filename_stem, [])
+
+
 def generate_individual_transcripts(paired_files: List[Dict],
                                     orphaned_files: List[Path],
                                     transcripts: Dict[str, Dict],
-                                    output_dir: Path) -> None:
+                                    output_dir: Path,
+                                    diarization_results: Optional[Dict[str, List[Dict]]] = None) -> None:
     """
     Generate individual transcript files (TXT and JSON) with timestamp headers.
 
@@ -85,6 +120,7 @@ def generate_individual_transcripts(paired_files: List[Dict],
         orphaned_files: List of orphaned audio files
         transcripts: Dictionary mapping filename stems to Whisper result dicts
         output_dir: Output directory for transcript files
+        diarization_results: Optional per-file diarization data
     """
     transcripts_dir = output_dir / "transcripts"
     utils.ensure_dir(transcripts_dir)
@@ -102,6 +138,8 @@ def generate_individual_transcripts(paired_files: List[Dict],
         result = transcripts[filename_stem]
         text = result["text"].strip()
         segments = result.get("segments", [])
+        diarization = get_diarization_for_file(diarization_results, filename_stem)
+        speaker_text = format_diarization_as_text(diarization)
         language = result.get("language", "unknown")
         duration = utils.get_audio_duration(audio_file)
 
@@ -134,10 +172,14 @@ def generate_individual_transcripts(paired_files: List[Dict],
             if config.ENABLE_QUALITY_CHECKS and quality_flags:
                 f.write(f"[QUALITY WARNINGS: {', '.join(sorted(quality_flags))}]\n")
 
+            if diarization:
+                speakers_detected = sorted({item.get("speaker", "UNKNOWN") for item in diarization})
+                f.write(f"[SPEAKERS: {', '.join(speakers_detected)}]\n")
+
             f.write("\n")
 
             # Write transcription
-            f.write(text)
+            f.write(speaker_text if speaker_text else text)
             f.write("\n")
 
         # Create JSON file with metadata and quality metrics
@@ -150,6 +192,9 @@ def generate_individual_transcripts(paired_files: List[Dict],
             "audio_duration_sec": round(duration, 3),
             "language": language,
             "transcription": text,
+            "diarization_available": bool(diarization),
+            "speakers_detected": sorted({item.get("speaker", "UNKNOWN") for item in diarization}),
+            "diarization": diarization,
             "word_count": utils.count_words(text),
             "character_count": len(text),
             "quality_flags": sorted(list(quality_flags)),
@@ -168,6 +213,8 @@ def generate_individual_transcripts(paired_files: List[Dict],
         result = transcripts[filename_stem]
         text = result["text"].strip()
         segments = result.get("segments", [])
+        diarization = get_diarization_for_file(diarization_results, filename_stem)
+        speaker_text = format_diarization_as_text(diarization)
         language = result.get("language", "unknown")
         duration = utils.get_audio_duration(audio_file)
         creation_time = utils.get_file_creation_time(audio_file)
@@ -202,10 +249,14 @@ def generate_individual_transcripts(paired_files: List[Dict],
             if config.ENABLE_QUALITY_CHECKS and quality_flags:
                 f.write(f"[QUALITY WARNINGS: {', '.join(sorted(quality_flags))}]\n")
 
+            if diarization:
+                speakers_detected = sorted({item.get("speaker", "UNKNOWN") for item in diarization})
+                f.write(f"[SPEAKERS: {', '.join(speakers_detected)}]\n")
+
             f.write("\n")
             f.write("This recording has no matching JSON timestamp file.\n\n")
             # Write transcription
-            f.write(text)
+            f.write(speaker_text if speaker_text else text)
             f.write("\n")
 
         # Create JSON file with metadata
@@ -217,6 +268,9 @@ def generate_individual_transcripts(paired_files: List[Dict],
             "audio_duration_sec": round(duration, 3),
             "language": language,
             "transcription": text,
+            "diarization_available": bool(diarization),
+            "speakers_detected": sorted({item.get("speaker", "UNKNOWN") for item in diarization}),
+            "diarization": diarization,
             "word_count": utils.count_words(text),
             "character_count": len(text),
             "quality_flags": sorted(list(quality_flags)),
@@ -231,7 +285,8 @@ def generate_combined_txt(paired_files: List[Dict],
                          transcripts: Dict[str, Dict],
                          session_name: str,
                          video_file: Path,
-                         output_file: Path) -> None:
+                         output_file: Path,
+                         diarization_results: Optional[Dict[str, List[Dict]]] = None) -> None:
     """
     Generate combined transcript in TXT format.
 
@@ -242,6 +297,7 @@ def generate_combined_txt(paired_files: List[Dict],
         session_name: Name of the session
         video_file: Path to video file (if exists)
         output_file: Output TXT file path
+        diarization_results: Optional per-file diarization data
     """
     with open(output_file, 'w', encoding='utf-8') as f:
         # Header
@@ -269,6 +325,8 @@ def generate_combined_txt(paired_files: List[Dict],
             result = transcripts[filename_stem]
             text = result["text"].strip()
             segments = result.get("segments", [])
+            diarization = get_diarization_for_file(diarization_results, filename_stem)
+            speaker_text = format_diarization_as_text(diarization)
             duration = utils.get_audio_duration(audio_file)
 
             # Analyze quality
@@ -288,8 +346,12 @@ def generate_combined_txt(paired_files: List[Dict],
             if config.ENABLE_QUALITY_CHECKS and quality_flags:
                 f.write(f"QUALITY WARNINGS: {', '.join(sorted(quality_flags))}\n")
 
+            if diarization:
+                speakers_detected = sorted({item.get("speaker", "UNKNOWN") for item in diarization})
+                f.write(f"SPEAKERS: {', '.join(speakers_detected)}\n")
+
             f.write(config.SECTION_SEPARATOR + "\n\n")
-            f.write(text)
+            f.write(speaker_text if speaker_text else text)
             f.write("\n\n\n")
 
         # Orphaned recordings (if any)
@@ -307,13 +369,15 @@ def generate_combined_txt(paired_files: List[Dict],
 
                 result = transcripts[filename_stem]
                 text = result["text"].strip()
+                diarization = get_diarization_for_file(diarization_results, filename_stem)
+                speaker_text = format_diarization_as_text(diarization)
                 creation_time = utils.get_file_creation_time(audio_file)
                 duration = utils.get_audio_duration(audio_file)
 
                 f.write(f"File: {audio_file.name}\n")
                 f.write(f"Created: {creation_time}\n")
                 f.write(f"Duration: {duration:.1f} seconds\n\n")
-                f.write(text)
+                f.write(speaker_text if speaker_text else text)
                 f.write("\n\n")
 
         # Footer
@@ -332,7 +396,8 @@ def generate_combined_json(paired_files: List[Dict],
                           transcripts: Dict[str, Dict],
                           session_name: str,
                           video_file: Path,
-                          output_file: Path) -> None:
+                          output_file: Path,
+                          diarization_results: Optional[Dict[str, List[Dict]]] = None) -> None:
     """
     Generate combined transcript in JSON format.
 
@@ -343,6 +408,7 @@ def generate_combined_json(paired_files: List[Dict],
         session_name: Name of the session
         video_file: Path to video file (if exists)
         output_file: Output JSON file path
+        diarization_results: Optional per-file diarization data
     """
     # Build annotations list
     annotations = []
@@ -360,6 +426,7 @@ def generate_combined_json(paired_files: List[Dict],
         result = transcripts[filename_stem]
         text = result["text"].strip()
         segments = result.get("segments", [])
+        diarization = get_diarization_for_file(diarization_results, filename_stem)
         language = result.get("language", "unknown")
         duration = utils.get_audio_duration(audio_file)
 
@@ -399,6 +466,9 @@ def generate_combined_json(paired_files: List[Dict],
             "audio_duration_sec": round(duration, 3),
             "language": language,
             "transcription": text,
+            "diarization_available": bool(diarization),
+            "speakers_detected": sorted({item.get("speaker", "UNKNOWN") for item in diarization}),
+            "diarization": diarization,
             "word_count": utils.count_words(text),
             "character_count": len(text),
             "quality_flags": sorted(list(quality_flags)),
@@ -417,6 +487,7 @@ def generate_combined_json(paired_files: List[Dict],
         result = transcripts[filename_stem]
         text = result["text"].strip()
         segments = result.get("segments", [])
+        diarization = get_diarization_for_file(diarization_results, filename_stem)
         language = result.get("language", "unknown")
         duration = utils.get_audio_duration(audio_file)
         creation_time = utils.get_file_creation_time(audio_file)
@@ -455,6 +526,9 @@ def generate_combined_json(paired_files: List[Dict],
             "audio_duration_sec": round(duration, 3),
             "language": language,
             "transcription": text,
+            "diarization_available": bool(diarization),
+            "speakers_detected": sorted({item.get("speaker", "UNKNOWN") for item in diarization}),
+            "diarization": diarization,
             "word_count": utils.count_words(text),
             "quality_flags": sorted(list(quality_flags)),
             "segments": segments_with_quality if config.ENABLE_QUALITY_CHECKS else [],
@@ -524,7 +598,8 @@ def generate_combined_json(paired_files: List[Dict],
 def generate_plain_text(paired_files: List[Dict],
                        orphaned_files: List[Path],
                        transcripts: Dict[str, Dict],
-                       output_file: Path) -> None:
+                       output_file: Path,
+                       diarization_results: Optional[Dict[str, List[Dict]]] = None) -> None:
     """
     Generate plain text transcript without timestamps or metadata.
 
@@ -533,6 +608,7 @@ def generate_plain_text(paired_files: List[Dict],
         orphaned_files: List of orphaned audio files
         transcripts: Dictionary mapping filename stems to Whisper result dicts
         output_file: Output TXT file path
+        diarization_results: Optional per-file diarization data
     """
     with open(output_file, 'w', encoding='utf-8') as f:
         # Process paired files (ordered by timestamp)
@@ -546,9 +622,11 @@ def generate_plain_text(paired_files: List[Dict],
 
             result = transcripts[filename_stem]
             text = result["text"].strip()
+            diarization = get_diarization_for_file(diarization_results, filename_stem)
+            speaker_text = format_diarization_as_text(diarization)
 
             # Write transcription text
-            f.write(text)
+            f.write(speaker_text if speaker_text else text)
             
             # Add double newline separator between recordings
             if i < len(paired_files) - 1 or orphaned_files:
@@ -564,9 +642,11 @@ def generate_plain_text(paired_files: List[Dict],
 
             result = transcripts[filename_stem]
             text = result["text"].strip()
+            diarization = get_diarization_for_file(diarization_results, filename_stem)
+            speaker_text = format_diarization_as_text(diarization)
 
             # Write transcription text
-            f.write(text)
+            f.write(speaker_text if speaker_text else text)
             
             # Add double newline separator between recordings (except last)
             if i < len(orphaned_files) - 1:

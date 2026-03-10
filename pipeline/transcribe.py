@@ -1,21 +1,23 @@
 """
-Transcription module using OpenAI Whisper.
+Transcription module using faster-whisper.
 
-This module handles loading the Whisper model and transcribing audio files.
+This module handles loading the transcription model and transcribing audio
+files while keeping a backward-compatible result structure for downstream
+pipeline steps.
 """
 
 from pathlib import Path
 from typing import List, Dict, Optional
 
 import torch
-import whisper
+from faster_whisper import BatchedInferencePipeline, WhisperModel
 
 import config
 import utils
 
 
 class WhisperTranscriber:
-    """Wrapper class for Whisper transcription."""
+    """Wrapper class for faster-whisper transcription."""
 
     def __init__(self, model_name: str = None, device: str = None):
         """
@@ -28,14 +30,22 @@ class WhisperTranscriber:
         self.model_name = model_name or config.WHISPER_MODEL
         # Auto-select: GPU if available, else CPU
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.compute_type = "float16" if self.device == "cuda" else "int8"
         self.model = None
+        self.pipeline = None
 
     def load_model(self):
-        """Load the Whisper model."""
+        """Load the faster-whisper model."""
         if self.model is None:
             print(f"Loading Whisper model '{self.model_name}' on {self.device}...")
             print("(This may take a moment on first run while downloading the model)")
-            self.model = whisper.load_model(self.model_name, device=self.device)
+            self.model = WhisperModel(
+                self.model_name,
+                device=self.device,
+                compute_type=self.compute_type,
+            )
+            if config.WHISPER_BATCH_SIZE > 0:
+                self.pipeline = BatchedInferencePipeline(self.model)
             print("✓ Model loaded successfully")
 
     def transcribe_file(self, audio_file: Path) -> Optional[Dict]:
@@ -46,25 +56,65 @@ class WhisperTranscriber:
             audio_file: Path to audio file
 
         Returns:
-            Full Whisper result dictionary with text, segments, and language,
+            Result dictionary with text, segments, and language,
             or None if error
         """
         if self.model is None:
             self.load_model()
 
         try:
-            # Transcribe with Whisper
-            result = self.model.transcribe(
-                str(audio_file),
-                language=config.LANGUAGE,
-                task=config.TASK,
-                temperature=config.TEMPERATURE,
-                verbose=config.VERBOSE,
-                word_timestamps=False,  # We have video timestamps already
-            )
+            if self.pipeline and config.WHISPER_BATCH_SIZE > 0:
+                segments_iter, info = self.pipeline.transcribe(
+                    str(audio_file),
+                    language=config.LANGUAGE,
+                    batch_size=config.WHISPER_BATCH_SIZE,
+                    word_timestamps=True,
+                )
+            else:
+                segments_iter, info = self.model.transcribe(
+                    str(audio_file),
+                    language=config.LANGUAGE,
+                    task=config.TASK,
+                    temperature=config.TEMPERATURE,
+                    word_timestamps=True,
+                    vad_filter=True,
+                )
 
-            # Return full result with text, segments, and language
-            return result
+            segments_list = []
+            full_text = ""
+
+            for segment in segments_iter:
+                seg_text = segment.text or ""
+                full_text += seg_text
+
+                words = []
+                if segment.words:
+                    for word in segment.words:
+                        words.append({
+                            "word": word.word,
+                            "start": word.start,
+                            "end": word.end,
+                            "probability": word.probability,
+                        })
+
+                # Keep keys expected by existing quality/output code.
+                segments_list.append({
+                    "id": segment.id,
+                    "start": segment.start,
+                    "end": segment.end,
+                    "text": seg_text.strip(),
+                    "compression_ratio": getattr(segment, "compression_ratio", 1.0),
+                    "no_speech_prob": getattr(segment, "no_speech_prob", 0.0),
+                    "avg_logprob": getattr(segment, "avg_logprob", -0.5),
+                    "words": words,
+                })
+
+            return {
+                "text": full_text.strip(),
+                "segments": segments_list,
+                "language": getattr(info, "language", config.LANGUAGE),
+                "_audio_path": str(audio_file),
+            }
 
         except Exception as e:
             print(f"Error transcribing {audio_file.name}: {e}")
@@ -83,7 +133,7 @@ class WhisperTranscriber:
             output_dir: Directory to save individual transcripts
 
         Returns:
-            Dictionary mapping filename stems to full Whisper result dictionaries
+            Dictionary mapping filename stems to result dictionaries
             (containing text, segments, language, etc.)
         """
         utils.ensure_dir(output_dir)
@@ -118,44 +168,4 @@ class WhisperTranscriber:
 
 
 if __name__ == "__main__":
-    # Test transcription
-    print("Testing Whisper transcription...")
-
-    # Find test session
-    sessions = utils.find_all_sessions(config.INPUT_DIR)
-    if not sessions:
-        print("No sessions found!")
-        exit(1)
-
-    session = sessions[0]
-    print(f"\nTesting with session: {session['name']}")
-
-    # Find audio files
-    paired, orphaned = utils.find_audio_json_pairs(session["path"])
-    if not paired:
-        print("No audio files found!")
-        exit(1)
-
-    # Test on first file only
-    test_file = paired[0]["audio"]
-    print(f"\nTest transcription: {test_file.name}")
-
-    # Create transcriber (auto-selects CPU/GPU)
-    transcriber = WhisperTranscriber()
-    transcriber.load_model()
-
-    # Transcribe
-    result = transcriber.transcribe_file(test_file)
-
-    if result:
-        text = result["text"]
-        print("\n✓ Transcription successful!")
-        print("\nTranscribed text:")
-        print("─" * 80)
-        print(text)
-        print("─" * 80)
-        print("\nStats:")
-        print(f"  Characters: {len(text)}")
-        print(f"  Words: {utils.count_words(text)}")
-    else:
-        print("\n✗ Transcription failed!")
+    print("Run the main pipeline via 'python pipeline/run_pipeline.py --input <path>'.")

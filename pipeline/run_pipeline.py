@@ -6,6 +6,7 @@ This script orchestrates the complete transcription workflow:
 1. Find session folders and audio/JSON pairs
 2. Preprocess audio (normalize, convert format)
 3. Transcribe using Whisper
+3b. Speaker diarization (optional)
 4. Merge transcriptions with timestamps
 5. Generate output files (TXT, JSON, report)
 6. Clean up intermediate files
@@ -28,13 +29,15 @@ import transcribe
 import merge_outputs
 
 
-def process_session(session_info: dict, cleanup: bool = True) -> bool:
+def process_session(session_info: dict, cleanup: bool = True,
+                    enable_diarization: bool = True) -> bool:
     """
     Process a single session.
 
     Args:
         session_info: Session information dict from utils.detect_session_structure()
         cleanup: Whether to delete intermediate files after processing
+        enable_diarization: Whether to run speaker diarization (can be overridden by --no-diarization)
 
     Returns:
         True if successful, False otherwise
@@ -91,6 +94,45 @@ def process_session(session_info: dict, cleanup: bool = True) -> bool:
         print("  ✗ Transcription failed!")
         return False
 
+    # Step 3b: Speaker diarization (optional)
+    diarization_results = {}
+    if enable_diarization and config.ENABLE_DIARIZATION:
+        print("\nStep 3b: Speaker diarization...")
+        from diarize import DiarizationProcessor
+
+        diarizer = DiarizationProcessor()
+        all_audio_for_diarization = [f["audio"] for f in paired_files] + orphaned_files
+
+        for audio_file in all_audio_for_diarization:
+            filename_stem = audio_file.stem
+            if filename_stem not in transcripts:
+                continue
+
+            preprocessed_audio = normalized_dir / audio_file.name
+            if not preprocessed_audio.exists():
+                print(f"  ⚠ Skipping {audio_file.name}: preprocessed file not found")
+                continue
+
+            print(f"  Diarizing: {audio_file.name}")
+            result = diarizer.process(
+                audio_file=preprocessed_audio,
+                transcript_result=transcripts[filename_stem],
+            )
+
+            if result:
+                diarization_results[filename_stem] = result
+                speakers = sorted({s["speaker"] for s in result})
+                print(f"  ✓ {len(speakers)} speaker(s): {', '.join(speakers)}")
+            else:
+                print(f"  ⚠ Diarization failed for {audio_file.name}")
+
+        print(f"\n  ✓ Diarization done: {len(diarization_results)}/{len(all_audio_for_diarization)} files")
+    else:
+        if not enable_diarization:
+            print("\nStep 3b: Diarization disabled (--no-diarization)")
+        else:
+            print("\nStep 3b: Diarization disabled (ENABLE_DIARIZATION=False)")
+
     # Step 4: Generate individual transcript files
     if config.GENERATE_INDIVIDUAL_TRANSCRIPTS:
         print("\nStep 4: Generating individual transcript files...")
@@ -98,7 +140,8 @@ def process_session(session_info: dict, cleanup: bool = True) -> bool:
             paired_files,
             orphaned_files,
             transcripts,
-            output_dir
+            output_dir,
+            diarization_results=diarization_results,
         )
         print(f"  ✓ Individual transcripts saved to: {output_dir / 'transcripts'}")
 
@@ -112,7 +155,8 @@ def process_session(session_info: dict, cleanup: bool = True) -> bool:
             transcripts,
             session_name,
             video_file,
-            txt_file
+            txt_file,
+            diarization_results=diarization_results,
         )
         print(f"  ✓ Combined TXT saved to: {txt_file}")
 
@@ -126,7 +170,8 @@ def process_session(session_info: dict, cleanup: bool = True) -> bool:
             transcripts,
             session_name,
             video_file,
-            json_file
+            json_file,
+            diarization_results=diarization_results,
         )
         print(f"  ✓ Combined JSON saved to: {json_file}")
 
@@ -138,7 +183,8 @@ def process_session(session_info: dict, cleanup: bool = True) -> bool:
             paired_files,
             orphaned_files,
             transcripts,
-            plain_text_file
+            plain_text_file,
+            diarization_results=diarization_results,
         )
         print(f"  ✓ Plain text saved to: {plain_text_file}")
 
@@ -353,6 +399,11 @@ Output is always placed in a 'transcripts/' subfolder within each session folder
         action='store_true',
         help="Keep intermediate processed audio files"
     )
+    parser.add_argument(
+        '--no-diarization',
+        action='store_true',
+        help="Disable speaker diarization (transcription only)"
+    )
 
     args = parser.parse_args()
 
@@ -395,11 +446,13 @@ Output is always placed in a 'transcripts/' subfolder within each session folder
 
     # Process each session
     cleanup = not args.no_cleanup
+    enable_diarization = not args.no_diarization
     success_count = 0
 
     for session in sessions:
         try:
-            if process_session(session, cleanup=cleanup):
+            if process_session(session, cleanup=cleanup,
+                               enable_diarization=enable_diarization):
                 success_count += 1
         except Exception as e:
             print(f"\n✗ Error processing session {session['name']}: {e}")
