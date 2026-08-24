@@ -309,7 +309,14 @@ def generate_processing_report(session_name: str, video_file: Path,
             last_ts = paired_files[-1]['timestamp_sec']
             f.write(f"First annotation timestamp:     {utils.format_timestamp(first_ts)}\n")
             f.write(f"Last annotation timestamp:      {utils.format_timestamp(last_ts)}\n")
-            f.write(f"Total video span covered:       {utils.format_timestamp(last_ts - first_ts, include_milliseconds=False)} ({last_ts - first_ts:.1f} seconds)\n\n")
+
+            # Either end is None when its JSON sidecar carried no 'video_timestamp_sec'
+            if first_ts is None or last_ts is None:
+                f.write(f"Total video span covered:       {utils.UNKNOWN_TIMESTAMP} "
+                        f"(missing 'video_timestamp_sec' in at least one JSON sidecar)\n\n")
+            else:
+                span = last_ts - first_ts
+                f.write(f"Total video span covered:       {utils.format_timestamp(span, include_milliseconds=False)} ({span:.1f} seconds)\n\n")
 
         f.write("OUTPUT FILES CREATED\n")
         f.write("─" * 80 + "\n")

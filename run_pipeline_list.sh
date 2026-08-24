@@ -77,6 +77,63 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
 fi
 
 # ==========================================
+# FFprobe verfügbar machen (optional)
+# ==========================================
+#
+# imageio-ffmpeg liefert nur ffmpeg, kein ffprobe. Ein statischer Build
+# (ffmpeg + ffprobe) kann nach $PROJECT_ROOT/bin entpackt werden.
+#
+# Ohne ffprobe läuft die Pipeline weiter: utils.get_audio_duration()
+# liest die Dauer dann über soundfile aus dem WAV-Header.
+
+if [[ -d "$PROJECT_ROOT/bin" ]]; then
+    export PATH="$PROJECT_ROOT/bin:$PATH"
+fi
+
+if ! command -v ffprobe >/dev/null 2>&1; then
+    echo "WARNUNG: ffprobe nicht im PATH."
+    echo "         Audio-Dauern werden über soundfile bestimmt."
+fi
+
+# ==========================================
+# CUDA-12-Libraries für CTranslate2
+# ==========================================
+#
+# faster-whisper transkribiert über CTranslate2, nicht über PyTorch.
+# CTranslate2 4.x lädt zur Laufzeit libcublas.so.12 und libcudnn_*.so.9.
+# Das hier installierte Torch (cu118) bringt nur die CUDA-11-Varianten mit,
+# deshalb liegen die CUDA-12-Libraries in einem eigenen Verzeichnis --
+# getrennt von site-packages, damit sie sich nicht mit Torchs cu11-Libs mischen.
+#
+# Einmalig anlegen mit:
+#   pip install --target "$PROJECT_ROOT/cuda12-libs" \
+#       nvidia-cublas-cu12 "nvidia-cudnn-cu12>=9,<10"
+
+CUDA12_LIB_DIR="$PROJECT_ROOT/cuda12-libs"
+
+if [[ ! -d "$CUDA12_LIB_DIR" ]]; then
+    echo "ERROR: CUDA-12-Libraries für CTranslate2 nicht gefunden:"
+    echo "       $CUDA12_LIB_DIR"
+    echo
+    echo "Einmalig installieren mit:"
+    echo "  pip install --target \"$CUDA12_LIB_DIR\" \\"
+    echo "      nvidia-cublas-cu12 \"nvidia-cudnn-cu12>=9,<10\""
+    exit 1
+fi
+
+# Alle nvidia/<paket>/lib-Verzeichnisse einsammeln und voranstellen.
+for libdir in "$CUDA12_LIB_DIR"/nvidia/*/lib; do
+    [[ -d "$libdir" ]] || continue
+    export LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+done
+
+if ! compgen -G "$CUDA12_LIB_DIR/nvidia/cublas/lib/libcublas.so.12*" >/dev/null; then
+    echo "ERROR: libcublas.so.12 nicht in $CUDA12_LIB_DIR gefunden."
+    echo "       Installation unvollständig -- siehe pip-Kommando oben."
+    exit 1
+fi
+
+# ==========================================
 # Jobinformationen
 # ==========================================
 
@@ -88,6 +145,8 @@ echo "Python:        $("$PYTHON" --version)"
 echo "Interpreter:   $("$PYTHON" -c 'import sys; print(sys.executable)')"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-nicht gesetzt}"
 echo "FFmpeg:        $(command -v ffmpeg)"
+echo "FFprobe:       $(command -v ffprobe || echo 'nicht gefunden (Fallback: soundfile)')"
+echo "LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-nicht gesetzt}"
 echo "=========================================="
 
 echo
@@ -131,6 +190,57 @@ print(
     round(torch.cuda.get_device_properties(0).total_memory / 1024**3, 2),
     "GB",
 )
+PY
+
+# ==========================================
+# CUDA-Library-Test für CTranslate2
+# ==========================================
+#
+# Prüft dieselben Libraries, die CTranslate2 zur Laufzeit per dlopen lädt.
+# Schlägt hier fehl, bevor stundenlang Audio vorverarbeitet wird.
+
+echo
+echo "CUDA-Library-Test (CTranslate2):"
+
+"$PYTHON" - <<'PY'
+import ctypes
+import sys
+
+import ctranslate2
+
+print("CTranslate2-Version:", ctranslate2.__version__)
+print("CUDA-Geräte:", ctranslate2.get_cuda_device_count())
+
+# CTranslate2 >= 4.5 braucht cuBLAS aus CUDA 12 und cuDNN 9.
+required = [
+    "libcublas.so.12",
+    "libcublasLt.so.12",
+    "libcudnn.so.9",
+    "libcudnn_ops.so.9",
+    "libcudnn_cnn.so.9",
+]
+
+missing = []
+
+for name in required:
+    try:
+        ctypes.CDLL(name)
+        print(f"  OK      {name}")
+    except OSError as error:
+        print(f"  FEHLT   {name}  ({error})")
+        missing.append(name)
+
+if missing:
+    print(
+        "ERROR: CTranslate2 kann diese CUDA-Libraries nicht laden: "
+        + ", ".join(missing),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+if ctranslate2.get_cuda_device_count() < 1:
+    print("ERROR: CTranslate2 sieht keine CUDA-GPU.", file=sys.stderr)
+    sys.exit(1)
 PY
 
 # ==========================================

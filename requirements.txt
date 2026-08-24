@@ -11,7 +11,6 @@ faster-whisper>=1.1.0,<2.0.0
 # ============================================================
 nemo_toolkit[asr]>=2.3.0,<3.0.0
 nltk>=3.8,<4.0
-soundfile>=0.12.1,<1.0
 git+https://github.com/MahmoudAshraf97/demucs.git@4273070a70ded308ddfd0879d267bbd06f89a1b7
 git+https://github.com/oliverguhr/deepmultilingualpunctuation.git@5a0dd7f4fd56687f59405aa8eba1144393d8b74b
 git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git@e23e1525bae810f0582b6e539ce7aec63fd01196
@@ -21,6 +20,11 @@ indic-numtowords @ git+https://github.com/AI4Bharat/indic-numtowords.git@167927b
 # AUDIO / ALLGEMEIN (bestehende Pakete bleiben erhalten)
 # ============================================================
 ffmpeg-python>=0.2.0
+
+# soundfile wird von der Diarization genutzt und ist zugleich der erste
+# Fallback in utils.get_audio_duration() -- damit die Pipeline auch in
+# Umgebungen ohne ffprobe-Binary die Audiodauer bestimmen kann.
+soundfile>=0.12.1,<1.0
 numpy>=1.20.0,<2.0
 pandas>=1.3.0
 matplotlib>=3.4.0
@@ -31,6 +35,18 @@ pyyaml>=6.0
 # Note: For GPU support, install torch separately with CUDA support
 #torch>=2.5.0
 #torchaudio>=2.5.0
+
+# ============================================================
+# CUDA-LIBRARIES FÜR CTRANSLATE2 (nicht hier installieren!)
+# ============================================================
+# faster-whisper rechnet über CTranslate2, nicht über PyTorch. CTranslate2 4.5+
+# lädt zur Laufzeit libcublas.so.12 und libcudnn_*.so.9 -- das Cluster-Torch
+# (cu118) liefert nur die CUDA-11-Varianten.
+#
+# Die CUDA-12-Libraries gehören deshalb NICHT in die venv, sondern in ein
+# eigenes Verzeichnis, das run_pipeline_list.sh in LD_LIBRARY_PATH einhängt:
+#
+#   pip install --target ./cuda12-libs nvidia-cublas-cu12 "nvidia-cudnn-cu12>=9,<10"
 
 # Additional dependencies
 tiktoken>=0.3.0

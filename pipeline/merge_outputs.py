@@ -135,6 +135,11 @@ def generate_individual_transcripts(paired_files: List[Dict],
         if filename_stem not in transcripts:
             continue
 
+        if timestamp_sec is None:
+            print(f"Warning: {audio_file.name} has no 'video_timestamp_sec' in its "
+                  f"JSON sidecar - transcript is written with an "
+                  f"{utils.UNKNOWN_TIMESTAMP} timestamp")
+
         result = transcripts[filename_stem]
         text = result["text"].strip()
         segments = result.get("segments", [])
@@ -186,7 +191,7 @@ def generate_individual_transcripts(paired_files: List[Dict],
         json_file = transcripts_dir / f"{filename_stem}.json"
         json_data = {
             "audio_file": audio_file.name,
-            "has_video_timestamp": True,
+            "has_video_timestamp": timestamp_sec is not None,
             "video_timestamp_sec": timestamp_sec,
             "video_timestamp_formatted": utils.format_timestamp(timestamp_sec),
             "audio_duration_sec": round(duration, 3),
@@ -338,7 +343,10 @@ def generate_combined_txt(paired_files: List[Dict],
 
             f.write(config.SECTION_SEPARATOR + "\n")
             f.write(f"ANNOTATION #{i}\n")
-            f.write(f"VIDEO TIMESTAMP: {utils.format_timestamp(timestamp_sec)} ({timestamp_sec} seconds)\n")
+            if timestamp_sec is None:
+                f.write(f"VIDEO TIMESTAMP: {utils.UNKNOWN_TIMESTAMP}\n")
+            else:
+                f.write(f"VIDEO TIMESTAMP: {utils.format_timestamp(timestamp_sec)} ({timestamp_sec} seconds)\n")
             f.write(f"AUDIO FILE: {audio_file.name}\n")
             f.write(f"DURATION: {duration:.1f} seconds\n")
 
@@ -459,7 +467,7 @@ def generate_combined_json(paired_files: List[Dict],
 
         annotations.append({
             "id": i,
-            "has_video_timestamp": True,
+            "has_video_timestamp": timestamp_sec is not None,
             "video_timestamp_sec": timestamp_sec,
             "video_timestamp_formatted": utils.format_timestamp(timestamp_sec),
             "audio_file": audio_file.name,
@@ -545,6 +553,21 @@ def generate_combined_json(paired_files: List[Dict],
     recordings_with_silence = sum(1 for a in annotations if 'silence_detected' in a.get('quality_flags', []))
     recordings_with_low_confidence = sum(1 for a in annotations if 'low_confidence' in a.get('quality_flags', []))
 
+    # Video coverage: a timestamp is None whenever its JSON sidecar carried no
+    # 'video_timestamp_sec', so the span is only defined if both ends are known.
+    first_timestamp_sec = annotations[0]['video_timestamp_sec'] if annotations else None
+    last_timestamp_sec = annotations[-1]['video_timestamp_sec'] if annotations else None
+
+    if len(annotations) <= 1:
+        span_sec = 0
+        span_formatted = "00:00:00"
+    elif first_timestamp_sec is None or last_timestamp_sec is None:
+        span_sec = None
+        span_formatted = utils.UNKNOWN_TIMESTAMP
+    else:
+        span_sec = round(last_timestamp_sec - first_timestamp_sec, 3)
+        span_formatted = utils.format_timestamp(span_sec, include_milliseconds=False)
+
     # Build complete JSON structure
     data = {
         "session_metadata": {
@@ -569,10 +592,10 @@ def generate_combined_json(paired_files: List[Dict],
             "average_annotation_duration_sec": round(total_duration / len(annotations), 1) if annotations else 0,
             "average_words_per_annotation": round(total_words / len(annotations)) if annotations else 0,
             "video_coverage": {
-                "first_timestamp_sec": annotations[0]['video_timestamp_sec'] if annotations else None,
-                "last_timestamp_sec": annotations[-1]['video_timestamp_sec'] if annotations else None,
-                "span_sec": round(annotations[-1]['video_timestamp_sec'] - annotations[0]['video_timestamp_sec'], 3) if len(annotations) > 1 else 0,
-                "span_formatted": utils.format_timestamp(annotations[-1]['video_timestamp_sec'] - annotations[0]['video_timestamp_sec'], include_milliseconds=False) if len(annotations) > 1 else "00:00:00"
+                "first_timestamp_sec": first_timestamp_sec,
+                "last_timestamp_sec": last_timestamp_sec,
+                "span_sec": span_sec,
+                "span_formatted": span_formatted
             },
             "quality_metrics": {
                 "total_segments": sum(len(a.get('segments', [])) for a in annotations),

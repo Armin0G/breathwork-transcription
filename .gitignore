@@ -49,3 +49,9 @@ $RECYCLE.BIN/
 # Temporary files
 temp_*
 *.tmp
+
+# CUDA-12-Libraries für CTranslate2 (pip install --target)
+cuda12-libs/
+
+# Lokal installierte statische Binaries (ffmpeg/ffprobe)
+bin/

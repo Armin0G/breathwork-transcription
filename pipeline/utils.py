@@ -13,6 +13,9 @@ from typing import Dict, List, Tuple, Optional
 
 import config
 
+# Placeholder written whenever a timestamp is unknown (missing JSON sidecar value)
+UNKNOWN_TIMESTAMP = "UNKNOWN"
+
 
 def find_audio_json_pairs(session_dir: Path) -> Tuple[List[Dict], List[Path]]:
     """
@@ -76,17 +79,20 @@ def find_audio_json_pairs(session_dir: Path) -> Tuple[List[Dict], List[Path]]:
     return paired_files, orphaned_files
 
 
-def format_timestamp(seconds: float, include_milliseconds: bool = True) -> str:
+def format_timestamp(seconds: Optional[float], include_milliseconds: bool = True) -> str:
     """
     Convert seconds to HH:MM:SS.mmm format.
 
     Args:
-        seconds: Time in seconds
+        seconds: Time in seconds, or None if the value is unknown
         include_milliseconds: Whether to include milliseconds
 
     Returns:
-        Formatted timestamp string
+        Formatted timestamp string, or UNKNOWN_TIMESTAMP if seconds is None
     """
+    if seconds is None:
+        return UNKNOWN_TIMESTAMP
+
     td = timedelta(seconds=seconds)
     hours = int(td.total_seconds() // 3600)
     minutes = int((td.total_seconds() % 3600) // 60)
@@ -98,38 +104,124 @@ def format_timestamp(seconds: float, include_milliseconds: bool = True) -> str:
         return f"{hours:02d}:{minutes:02d}:{int(secs):02d}"
 
 
-def get_audio_duration(audio_file: Path) -> float:
+def _resolve_binary(name: str) -> Optional[str]:
     """
-    Get the duration of an audio file in seconds using FFmpeg.
+    Locate a helper binary.
+
+    Looks in PATH first. If that fails, look next to the ffmpeg binary: on the
+    cluster ffmpeg is symlinked into .venv/bin by the job script, and a manually
+    installed ffprobe usually sits in the same directory.
 
     Args:
-        audio_file: Path to audio file (any format supported by FFmpeg)
+        name: Binary name, e.g. "ffprobe"
 
     Returns:
-        Duration in seconds
+        Absolute path to the binary, or None if it could not be found
     """
+    import shutil
+
+    path = shutil.which(name)
+    if path:
+        return path
+
+    ffmpeg_path = shutil.which('ffmpeg')
+    if ffmpeg_path:
+        candidate = Path(ffmpeg_path).resolve().parent / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+
+    return None
+
+
+def _duration_via_soundfile(audio_file: Path) -> Optional[float]:
+    """Read the duration from the file header. No external binary required."""
     try:
-        import subprocess
-        import json
+        import soundfile as sf
 
-        # Use ffprobe to get duration (works with any audio format)
-        cmd = [
-            'ffprobe',
-            '-v', 'quiet',
-            '-print_format', 'json',
-            '-show_format',
-            str(audio_file)
-        ]
+        info = sf.info(str(audio_file))
+        if info.samplerate > 0:
+            return info.frames / float(info.samplerate)
+    except Exception:
+        return None
 
+    return None
+
+
+def _duration_via_ffprobe(audio_file: Path) -> Optional[float]:
+    """Read the duration via ffprobe (any format FFmpeg understands)."""
+    import subprocess
+
+    ffprobe = _resolve_binary('ffprobe')
+    if ffprobe is None:
+        return None
+
+    cmd = [
+        ffprobe,
+        '-v', 'quiet',
+        '-print_format', 'json',
+        '-show_format',
+        str(audio_file)
+    ]
+
+    try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         data = json.loads(result.stdout)
+        return float(data['format']['duration'])
+    except Exception:
+        return None
 
-        duration = float(data['format']['duration'])
-        return duration
 
-    except Exception as e:
-        print(f"Warning: Could not get duration for {audio_file}: {e}")
-        return 0.0
+def _duration_via_ffmpeg(audio_file: Path) -> Optional[float]:
+    """Last resort: parse the "Duration:" line that ffmpeg prints to stderr."""
+    import re
+    import subprocess
+
+    ffmpeg = _resolve_binary('ffmpeg')
+    if ffmpeg is None:
+        return None
+
+    try:
+        result = subprocess.run(
+            [ffmpeg, '-i', str(audio_file)],
+            capture_output=True,
+            text=True
+        )
+    except Exception:
+        return None
+
+    match = re.search(r'Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)', result.stderr)
+    if not match:
+        return None
+
+    hours, minutes, secs = match.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(secs)
+
+
+def get_audio_duration(audio_file: Path) -> float:
+    """
+    Get the duration of an audio file in seconds.
+
+    Three sources are tried in order, so the pipeline keeps working in
+    environments that ship ffmpeg but no ffprobe (e.g. the venv setup on the
+    cluster, where ffmpeg comes from imageio-ffmpeg):
+      1. soundfile  - header read, covers the WAV files we preprocess
+      2. ffprobe    - covers every format FFmpeg understands
+      3. ffmpeg -i  - same coverage, parsed from stderr
+
+    Args:
+        audio_file: Path to audio file
+
+    Returns:
+        Duration in seconds, or 0.0 if no method succeeded
+    """
+    for probe in (_duration_via_soundfile, _duration_via_ffprobe, _duration_via_ffmpeg):
+        duration = probe(audio_file)
+        if duration is not None:
+            return duration
+
+    print(f"Warning: Could not determine duration for {audio_file} "
+          f"(tried soundfile, ffprobe, ffmpeg)")
+    return 0.0
 
 
 def count_words(text: str) -> int:
