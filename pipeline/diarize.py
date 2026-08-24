@@ -187,7 +187,11 @@ class DiarizationProcessor:
 
         from diarization import MSDDDiarizer
 
-        diarizer = MSDDDiarizer(device=self.device)
+        diarizer = MSDDDiarizer(
+            device=self.device,
+            num_speakers=config.NUM_SPEAKERS,
+            max_speakers=config.MAX_SPEAKERS,
+        )
         try:
             labels = diarizer.diarize(torch.from_numpy(audio_waveform).unsqueeze(0))
             return labels
@@ -386,3 +390,4 @@ class DiarizationProcessor:
 
         sentences.append(sentence)
         return sentences
+

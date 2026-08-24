@@ -204,8 +204,14 @@ ENABLE_DIARIZATION = True
 # For speech-only interviews this is usually not needed.
 ENABLE_STEMMING = False
 
-# Upper bound for automatic speaker estimation
-MAX_SPEAKERS = 4
+# Upper bound for automatic speaker estimation when no fixed number is provided
+MAX_SPEAKERS = 2
+
+# Fixed number of speakers for diarization.
+# Set to an integer (e.g. 2 for interviewer + participant) to force this many
+# speakers in the NeMo MSDD diarizer, or to None to let the model estimate
+# the number of speakers automatically.
+NUM_SPEAKERS = None
 
 # Speaker label format used in output files
 SPEAKER_LABEL_FORMAT = "SPEAKER_{:02d}"
@@ -258,3 +264,4 @@ if __name__ == "__main__":
     diar_path = DIARIZATION_REPO_PATH if DIARIZATION_REPO_PATH is not None else (BASE_DIR.parent / "whisper-diarization")
     print(f"  Diarization repo (when enabled): {diar_path}")
     print(f"\nNote: Input/output directories are now specified via --input argument")
+

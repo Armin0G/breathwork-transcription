@@ -29,8 +29,8 @@ pyyaml>=6.0
 
 # PyTorch
 # Note: For GPU support, install torch separately with CUDA support
-torch>=2.5.0
-torchaudio>=2.5.0
+#torch>=2.5.0
+#torchaudio>=2.5.0
 
 # Additional dependencies
 tiktoken>=0.3.0
